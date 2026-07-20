@@ -34,3 +34,15 @@ test("catalogue contains the fixed taxonomy and every corrected item", async () 
   assert.equal(items.length, catalog.totalItems);
   assert.ok(items.every((item) => item.name && Number.isInteger(item.row)));
 });
+
+test("global item search and GitHub Pages entrypoint are present", async () => {
+  const [component, staticHtml, workflow] = await Promise.all([
+    readFile(new URL("../app/catalog-browser.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../pages-dist/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../.github/workflows/deploy-pages.yml", import.meta.url), "utf8"),
+  ]);
+  assert.match(component, /Search all inventory/);
+  assert.match(component, /item\.name.*item\.sku.*item\.unit.*item\.category.*item\.subcategory/s);
+  assert.match(staticHtml, /OPRO Catalogue/);
+  assert.match(workflow, /actions\/deploy-pages@v4/);
+});

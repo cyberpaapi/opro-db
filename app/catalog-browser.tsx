@@ -39,11 +39,12 @@ export default function CatalogBrowser() {
   const [categoryName, setCategoryName] = useState("");
   const [subcategoryName, setSubcategoryName] = useState(ALL_SUBCATEGORIES);
   const [query, setQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
   const [page, setPage] = useState(1);
   const [selectedItem, setSelectedItem] = useState<ItemWithContext | null>(null);
 
   useEffect(() => {
-    fetch("/catalog.json")
+    fetch(new URL("catalog.json", document.baseURI))
       .then((response) => {
         if (!response.ok) throw new Error("Catalogue unavailable");
         return response.json();
@@ -57,27 +58,45 @@ export default function CatalogBrowser() {
     [catalog, categoryName],
   );
 
+  const allItems = useMemo(
+    () =>
+      catalog?.categories.flatMap((category) =>
+        category.subcategories.flatMap((subcategory) =>
+          subcategory.items.map((item) => ({
+            ...item,
+            category: category.name,
+            subcategory: subcategory.name,
+          })),
+        ),
+      ) ?? [],
+    [catalog],
+  );
+
   const filteredItems = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery) {
+      return allItems.filter((item) =>
+        `${item.name} ${item.sku} ${item.unit} ${item.category} ${item.subcategory}`
+          .toLowerCase()
+          .includes(normalizedQuery),
+      );
+    }
     if (!selectedCategory) return [];
     const selectedSubcategories =
       subcategoryName === ALL_SUBCATEGORIES
         ? selectedCategory.subcategories
         : selectedCategory.subcategories.filter((subcategory) => subcategory.name === subcategoryName);
-    const normalizedQuery = query.trim().toLowerCase();
     return selectedSubcategories.flatMap((subcategory) =>
-      subcategory.items
-        .filter((item) => {
-          if (!normalizedQuery) return true;
-          return `${item.name} ${item.sku} ${item.unit}`.toLowerCase().includes(normalizedQuery);
-        })
-        .map((item) => ({
-          ...item,
-          category: selectedCategory.name,
-          subcategory: subcategory.name,
-        })),
+      subcategory.items.map((item) => ({
+        ...item,
+        category: selectedCategory.name,
+        subcategory: subcategory.name,
+      })),
     );
-  }, [selectedCategory, subcategoryName, query]);
+  }, [allItems, selectedCategory, subcategoryName, query]);
 
+  const searchingGlobally = query.trim().length > 0;
+  const suggestions = query.trim().length >= 2 ? filteredItems.slice(0, 8) : [];
   const pageCount = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
   const visibleItems = filteredItems.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -122,7 +141,11 @@ export default function CatalogBrowser() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${categoryName.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-") || "catalog"}.csv`;
+    anchor.download = `${
+      searchingGlobally
+        ? "opro-search-results"
+        : categoryName.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-") || "catalog"
+    }.csv`;
     anchor.click();
     URL.revokeObjectURL(url);
   }
@@ -154,6 +177,7 @@ export default function CatalogBrowser() {
 
   return (
     <main className="app-shell">
+      <a className="skip-link" href="#catalog-results">Skip to inventory results</a>
       <header className="app-header">
         <div>
           <div className="brand-line">
@@ -169,20 +193,65 @@ export default function CatalogBrowser() {
         </div>
       </header>
 
+      <section className="global-search-band" aria-label="Global inventory search">
+        <div className="global-search-copy">
+          <p className="eyebrow">Search first</p>
+          <h1>Find any item directly</h1>
+          <p>Search all {formatCount(catalog.totalItems)} items by name, SKU, unit, category, or subcategory.</p>
+        </div>
+        <div className="global-search-wrap">
+          <label htmlFor="global-item-search">Search all inventory</label>
+          <div className="global-search-control">
+            <input
+              id="global-item-search"
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
+              placeholder="Try an item name or SKU"
+              autoComplete="off"
+              aria-controls="global-search-suggestions"
+            />
+            {query && (
+              <button onMouseDown={(event) => event.preventDefault()} onClick={() => setQuery("")}>Clear</button>
+            )}
+          </div>
+          {searchFocused && suggestions.length > 0 && (
+            <div className="search-suggestions" id="global-search-suggestions" role="listbox">
+              {suggestions.map((item) => (
+                <button
+                  key={`suggestion-${item.row}`}
+                  role="option"
+                  aria-selected="false"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setSelectedItem(item);
+                    setSearchFocused(false);
+                  }}
+                >
+                  <span><strong>{item.name}</strong><small>{item.sku || "No SKU"}</small></span>
+                  <span><strong>{item.category}</strong><small>{labelSubcategory(item.subcategory)}</small></span>
+                </button>
+              ))}
+              {filteredItems.length > suggestions.length && (
+                <p>Showing 8 suggestions · {formatCount(filteredItems.length)} total matches below</p>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+
       <section className="workspace">
         <aside className="category-panel" aria-label="Main categories">
           <div className="panel-heading">
-            <p className="eyebrow">Step 1</p>
+            <p className="eyebrow">Browse instead</p>
             <h1>Select a category</h1>
             <p>Choose a main category to reveal its subcategories and items.</p>
           </div>
           <div className="mobile-category-select">
             <label htmlFor="mobile-category">Main category</label>
-            <select
-              id="mobile-category"
-              value={categoryName}
-              onChange={(event) => chooseCategory(event.target.value)}
-            >
+            <select id="mobile-category" value={categoryName} onChange={(event) => chooseCategory(event.target.value)}>
               <option value="">Choose a category</option>
               {catalog.categories.map((category) => (
                 <option key={category.name} value={category.name}>
@@ -206,15 +275,15 @@ export default function CatalogBrowser() {
           </nav>
         </aside>
 
-        <section className="items-panel" aria-live="polite">
-          {!selectedCategory ? (
+        <section className="items-panel" id="catalog-results" tabIndex={-1} aria-live="polite">
+          {!selectedCategory && !searchingGlobally ? (
             <div className="empty-state">
               <div className="empty-index">01</div>
               <p className="eyebrow">Start here</p>
-              <h2>Select a main category</h2>
-              <p>The matching subcategories and inventory items will appear here.</p>
+              <h2>Search an item or select a category</h2>
+              <p>Use the search above for a direct lookup, or browse the client-approved category tree.</p>
               <div className="empty-example">
-                <span>Category</span><span>Subcategory</span><span>Item details</span>
+                <span>Item name or SKU</span><span>Category</span><span>Subcategory</span><span>Specifications</span>
               </div>
             </div>
           ) : (
@@ -222,41 +291,31 @@ export default function CatalogBrowser() {
               <div className="items-header">
                 <div>
                   <p className="eyebrow">Inventory browser</p>
-                  <h2>{selectedCategory.name}</h2>
-                  <p>{formatCount(selectedCategory.count)} items across {selectedCategory.subcategories.length} populated subcategories.</p>
+                  <h2>{searchingGlobally ? `Results for “${query.trim()}”` : selectedCategory!.name}</h2>
+                  <p>
+                    {searchingGlobally
+                      ? "Searching every category and subcategory in the catalogue."
+                      : `${formatCount(selectedCategory!.count)} items across ${selectedCategory!.subcategories.length} subcategories.`}
+                  </p>
                 </div>
-                <button className="export-button" onClick={downloadCsv} disabled={!filteredItems.length}>
-                  Export filtered CSV
-                </button>
+                <button className="export-button" onClick={downloadCsv} disabled={!filteredItems.length}>Export filtered CSV</button>
               </div>
 
-              <div className="filters">
-                <div className="field-group">
-                  <label htmlFor="subcategory">Step 2 · Subcategory</label>
-                  <select
-                    id="subcategory"
-                    value={subcategoryName}
-                    onChange={(event) => setSubcategoryName(event.target.value)}
-                  >
-                    <option value={ALL_SUBCATEGORIES}>All subcategories ({formatCount(selectedCategory.count)})</option>
-                    {selectedCategory.subcategories.map((subcategory) => (
-                      <option key={subcategory.name || "direct"} value={subcategory.name}>
-                        {labelSubcategory(subcategory.name)} ({formatCount(subcategory.count)})
-                      </option>
-                    ))}
-                  </select>
+              {!searchingGlobally && selectedCategory && (
+                <div className="filters single-filter">
+                  <div className="field-group">
+                    <label htmlFor="subcategory">Step 2 · Subcategory</label>
+                    <select id="subcategory" value={subcategoryName} onChange={(event) => setSubcategoryName(event.target.value)}>
+                      <option value={ALL_SUBCATEGORIES}>All subcategories ({formatCount(selectedCategory.count)})</option>
+                      {selectedCategory.subcategories.map((subcategory) => (
+                        <option key={subcategory.name || "direct"} value={subcategory.name}>
+                          {labelSubcategory(subcategory.name)} ({formatCount(subcategory.count)})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <div className="field-group search-field">
-                  <label htmlFor="item-search">Step 3 · Find an item</label>
-                  <input
-                    id="item-search"
-                    type="search"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search item name, SKU, or unit"
-                  />
-                </div>
-              </div>
+              )}
 
               <div className="results-bar">
                 <p><strong>{formatCount(filteredItems.length)}</strong> matching items</p>
@@ -267,20 +326,14 @@ export default function CatalogBrowser() {
                 <div className="table-wrap">
                   <table>
                     <thead>
-                      <tr>
-                        <th>Item name</th>
-                        <th>SKU</th>
-                        <th>Usage unit</th>
-                        <th><span className="sr-only">Action</span></th>
-                      </tr>
+                      <tr><th>Item name</th><th>SKU</th><th>Usage unit</th><th><span className="sr-only">Action</span></th></tr>
                     </thead>
                     <tbody>
                       {visibleItems.map((item) => (
                         <tr key={`${item.row}-${item.sku}`}>
                           <td>
-                            <button className="item-name" onClick={() => setSelectedItem(item)}>
-                              {item.name}
-                            </button>
+                            <button className="item-name" onClick={() => setSelectedItem(item)}>{item.name}</button>
+                            <span className="item-context">{item.category} · {labelSubcategory(item.subcategory)}</span>
                             <span className="mobile-item-meta">{item.sku || "No SKU"} · {item.unit || "No unit"}</span>
                           </td>
                           <td>{item.sku || "—"}</td>
@@ -294,8 +347,8 @@ export default function CatalogBrowser() {
               ) : (
                 <div className="no-results">
                   <h3>No items found</h3>
-                  <p>Try another subcategory or clear the search text.</p>
-                  <button onClick={() => setQuery("")}>Clear search</button>
+                  <p>{searchingGlobally ? "Try a shorter item name, SKU, or another spelling." : "Try another subcategory."}</p>
+                  {searchingGlobally && <button onClick={() => setQuery("")}>Clear search</button>}
                 </div>
               )}
 
@@ -313,18 +366,9 @@ export default function CatalogBrowser() {
 
       {selectedItem && (
         <div className="drawer-layer" role="presentation" onMouseDown={() => setSelectedItem(null)}>
-          <aside
-            className="details-drawer"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="item-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
+          <aside className="details-drawer" role="dialog" aria-modal="true" aria-labelledby="item-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="drawer-header">
-              <div>
-                <p className="eyebrow">Item specifications</p>
-                <h2 id="item-title">{selectedItem.name}</h2>
-              </div>
+              <div><p className="eyebrow">Item specifications</p><h2 id="item-title">{selectedItem.name}</h2></div>
               <button className="close-button" onClick={() => setSelectedItem(null)} aria-label="Close item details">Close</button>
             </div>
             <dl className="spec-list">
@@ -336,10 +380,7 @@ export default function CatalogBrowser() {
               <div><dt>Assignment source</dt><dd>{selectedItem.assignedBy || "Not provided"}</dd></div>
               <div><dt>Workbook row</dt><dd className="mono">{selectedItem.row}</dd></div>
             </dl>
-            <div className="drawer-note">
-              <strong>Catalogue note</strong>
-              <p>This item uses the corrected client-approved category and subcategory taxonomy.</p>
-            </div>
+            <div className="drawer-note"><strong>Catalogue note</strong><p>This item uses the corrected client-approved category and subcategory taxonomy.</p></div>
           </aside>
         </div>
       )}
