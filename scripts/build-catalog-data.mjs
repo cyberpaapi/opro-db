@@ -8,13 +8,16 @@ const assignments = JSON.parse(
   await fs.readFile(path.join(work, "recategorization_assignments.json"), "utf8"),
 );
 const taxonomy = JSON.parse(await fs.readFile(path.join(work, "taxonomy_audit.json"), "utf8"));
+const recovered = JSON.parse(
+  await fs.readFile(path.join(root, "work", "opro_final", "removed_classifications.json"), "utf8"),
+);
 const rows = source.sheets.find((sheet) => sheet.name === "Categorised Items").rows.slice(1);
 
 if (rows.length !== assignments.length) {
   throw new Error(`Item row mismatch: ${rows.length} vs ${assignments.length}`);
 }
 
-const categoryNames = Object.keys(taxonomy.allowed);
+const categoryNames = [...Object.keys(taxonomy.allowed), "Uncategorised Items"];
 const order = new Map(categoryNames.map((category, index) => [category, index]));
 const grouped = new Map();
 
@@ -33,6 +36,22 @@ for (let index = 0; index < rows.length; index += 1) {
     oldCategory: row[5] || assignment.old_zoho_category || "",
     assignedBy: row[6] || assignment.assigned_by || "",
     row: assignment.excel_row,
+  });
+}
+
+for (const item of recovered) {
+  const category = item.new_category;
+  const subcategory = item.new_subcategory || "";
+  if (!grouped.has(category)) grouped.set(category, new Map());
+  const subcategories = grouped.get(category);
+  if (!subcategories.has(subcategory)) subcategories.set(subcategory, []);
+  subcategories.get(subcategory).push({
+    name: item.item_name || "Unnamed item",
+    sku: item.sku || "",
+    unit: item.usage_unit || "",
+    oldCategory: item.old_zoho_category || "",
+    assignedBy: "Recovered from Removed.xlsx",
+    row: assignments.length + item.removed_excel_row,
   });
 }
 
@@ -56,7 +75,7 @@ const categories = categoryNames
 
 const payload = {
   generatedAt: "2026-07-20",
-  totalItems: assignments.length,
+  totalItems: assignments.length + recovered.length,
   taxonomySubcategoryCount: Object.values(taxonomy.allowed).reduce(
     (sum, subcategories) => sum + subcategories.length,
     0,

@@ -25,14 +25,17 @@ test("server-renders the OPRO catalogue shell", async () => {
 
 test("catalogue contains the fixed taxonomy and every corrected item", async () => {
   const catalog = JSON.parse(await readFile(new URL("../public/catalog.json", import.meta.url), "utf8"));
-  assert.equal(catalog.totalItems, 21782);
-  assert.equal(catalog.categories.length, 25);
+  assert.equal(catalog.totalItems, 23619);
+  assert.equal(catalog.categories.length, 26);
   assert.equal(catalog.taxonomySubcategoryCount, 385);
   const items = catalog.categories.flatMap((category) =>
     category.subcategories.flatMap((subcategory) => subcategory.items),
   );
   assert.equal(items.length, catalog.totalItems);
   assert.ok(items.every((item) => item.name && Number.isInteger(item.row)));
+  const uncategorised = catalog.categories.find((category) => category.name === "Uncategorised Items");
+  assert.equal(uncategorised?.count, 586);
+  assert.deepEqual(uncategorised?.subcategories.map((subcategory) => subcategory.name), [""]);
 });
 
 test("global item search and GitHub Pages entrypoint are present", async () => {
